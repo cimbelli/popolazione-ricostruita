@@ -27,9 +27,9 @@ jobs:
       - name: Estrai variazioni SITUAS e ricostruisci popolazione
         run: |
           mkdir -p data/raw
-          # Scarica comuni vigenti alla data odierna e variazioni dal 2019
-          opensituas comuni --data-riferimento today --formato json -o data/raw/comuni_attuali.json
-          opensituas variazioni --data-inizio 2019-01-01 --formato json -o data/raw/variazioni_2019_oggi.json
+          opensituas -o json get 61 --out data/raw/comuni_attuali.json
+          opensituas -o json get 129 --out data/raw/variazioni_storiche.json
+          opensituas -o json get 99 --from 01/01/2019 --to 31/12/2026 --out data/raw/raccordo_2019_2026.json
           python scripts/build_series.py
 
       - name: Salva e pubblica i nuovi dataset
