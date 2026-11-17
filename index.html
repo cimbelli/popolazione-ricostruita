@@ -1,0 +1,111 @@
+<!DOCTYPE html>
+<html lang="it">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>Popolazione Comuni Italiani 2002–2026 (Confini Attuali)</title>
+  <script src="https://jsdelivr.net"></script>
+  <style>
+    body { font-family: system-ui, -apple-system, sans-serif; max-width: 1100px; margin: 2rem auto; padding: 0 1rem; color: #1e293b; }
+    .controls { display: flex; gap: 1rem; flex-wrap: wrap; margin-bottom: 1.5rem; align-items: center; }
+    input { flex: 1; min-width: 260px; padding: 0.7rem 1rem; font-size: 1rem; border: 1px solid #cbd5e1; border-radius: 8px; }
+    button { padding: 0.7rem 1.2rem; background: #0f172a; color: #fff; border: none; border-radius: 8px; cursor: pointer; font-weight: 500; }
+    button:hover { background: #334155; }
+    .legend { font-size: 0.875rem; color: #475569; margin-bottom: 1rem; background: #f8fafc; padding: 0.75rem 1rem; border-radius: 8px; border-left: 4px solid #3b82f6; }
+    .stimato-prop { font-style: italic; color: #b45309; background: #fef3c7; padding: 2px 5px; border-radius: 4px; }
+    .stimato-somma { color: #0369a1; }
+    table { width: 100%; border-collapse: collapse; margin-top: 1.5rem; font-size: 0.9rem; overflow-x: auto; display: block; }
+    th, td { border-bottom: 1px solid #e2e8f0; padding: 0.5rem 0.6rem; text-align: right; white-space: nowrap; }
+    th:first-child, td:first-child { text-align: left; position: sticky; left: 0; background: #fff; font-weight: 600; }
+  </style>
+</head>
+<body>
+
+  <h1>Popolazione Comuni 2002–2026 ai confini vigenti</h1>
+  
+  <div class="legend">
+    <strong>Legenda dati:</strong>
+    Valori normali = Dato ufficiale Istat |
+    <span class="stimato-somma">Valori blu</span> = Somma da fusione |
+    <span class="stimato-prop">Valori in corsivo</span> = Stima proporzionale arrotondata all'unità (scorpori/variazioni territoriali)
+  </div>
+
+  <div class="controls">
+    <input type="text" id="search" list="lista-comuni" placeholder="Cerca un comune (es. Uggiate con Ronago, Milano...)">
+    <datalist id="lista-comuni"></datalist>
+    <button onclick="scaricaCSVCompleto()">Scarica intero CSV 2002–2026</button>
+  </div>
+
+  <div id="scheda-comune" style="display:none;">
+    <h2 id="nome-comune"></h2>
+    <p id="note-comune" style="color:#475569;"></p>
+    <canvas id="grafico" height="95"></canvas>
+    <table id="tabella-anni"></table>
+  </div>
+
+  <script>
+    let dataset = [];
+    let chartInstance = null;
+    const ANNI = Array.from({length: 25}, (_, i) => String(2002 + i));
+
+    // Caricamento istantaneo del JSON pre-calcolato da GitHub Actions
+    fetch('data/popolazione_2026.json')
+      .then(res => res.json())
+      .then(data => {
+        dataset = data;
+        const datalist = document.getElementById('lista-comuni');
+        data.forEach(c => {
+          const opt = document.createElement('option');
+          opt.value = `${c.denominazione} (${c.sigla_prov}) [${c.codice_istat}]`;
+          datalist.appendChild(opt);
+        });
+      });
+
+    document.getElementById('search').addEventListener('change', (e) => {
+      const match = e.target.value.match(/\[(\d+)\]$/);
+      if (!match) return;
+      const comune = dataset.find(c => c.codice_istat === match[1]);
+      if (comune) mostraComune(comune);
+    });
+
+    function mostraComune(c) {
+      document.getElementById('scheda-comune').style.display = 'block';
+      document.getElementById('nome-comune').textContent = `${c.denominazione} (${c.sigla_prov}) – Codice Istat ${c.codice_istat}`;
+      document.getElementById('note-comune').textContent = c.note || 'Nessuna variazione territoriale post-2019.';
+
+      // Costruzione tabella con CORSIVO sui valori stimati per proporzione ("P")
+      let thead = '<thead><tr><th>Anno</th>' + ANNI.map(a => `<th>${a}</th>`).join('') + '</tr></thead>';
+      let tbody = '<tbody><tr><td>Popolazione</td>' + ANNI.map(a => {
+        const val = c.serie[a].v.toLocaleString('it-IT');
+        const tipo = c.serie[a].t; // "R" = Reale, "S" = Somma, "P" = Proporzione
+        if (tipo === 'P') return `<td><span class="stimato-prop" title="Stimato per proporzione">${val}</span></td>`;
+        if (tipo === 'S') return `<td><span class="stimato-somma" title="Ricostruito per somma (fusione)">${val}</span></td>`;
+        return `<td>${val}</td>`;
+      }).join('') + '</tr></tbody>';
+      document.getElementById('tabella-anni').innerHTML = thead + tbody;
+
+      // Grafico Chart.js (punti tratteggiati/evidenziati dove il dato è stimato)
+      const ctx = document.getElementById('grafico').getContext('2d');
+      if (chartInstance) chartInstance.destroy();
+      chartInstance = new Chart(ctx, {
+        type: 'line',
+        data: {
+          labels: ANNI,
+          datasets: [{
+            label: 'Popolazione residente',
+            data: ANNI.map(a => c.serie[a].v),
+            borderColor: '#0f172a',
+            pointBackgroundColor: ANNI.map(a => c.serie[a].t === 'P' ? '#d97706' : '#0f172a'),
+            pointRadius: ANNI.map(a => c.serie[a].t === 'P' ? 5 : 3),
+            tension: 0.15
+          }]
+        }
+      });
+    }
+
+    function scaricaCSVCompleto() {
+      window.location.href = 'data/popolazione_2026.csv';
+    }
+  </script>
+</body>
+</html>
