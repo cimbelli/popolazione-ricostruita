@@ -1,0 +1,41 @@
+name: Aggiorna Serie Storica Comuni 2002-2026
+
+on:
+  schedule:
+    - cron: '0 4 1 * *' # Ogni 1° del mese alle 04:00 UTC
+  workflow_dispatch:     # Avvio manuale con un clic
+
+permissions:
+  contents: write
+
+jobs:
+  build-data:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+
+      - name: Setup Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: '3.11'
+
+      - name: Installa dipendenze e opensituas
+        run: |
+          pip install pandas requests opensituas
+
+      - name: Estrai variazioni SITUAS e ricostruisci popolazione
+        run: |
+          mkdir -p data/raw
+          # Scarica comuni vigenti alla data odierna e variazioni dal 2019
+          opensituas comuni --data-riferimento today --formato json -o data/raw/comuni_attuali.json
+          opensituas variazioni --data-inizio 2019-01-01 --formato json -o data/raw/variazioni_2019_oggi.json
+          python scripts/build_series.py
+
+      - name: Salva e pubblica i nuovi dataset
+        run: |
+          git config user.name "github-actions[bot]"
+          git config user.email "github-actions[bot]@://github.com"
+          git add data/popolazione_2026.json data/popolazione_2026.csv
+          git commit -m "Aggiornamento automatico serie storica $(date +'%Y-%m-%d')" || exit 0
+          git push
