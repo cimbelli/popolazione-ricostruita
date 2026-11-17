@@ -23,19 +23,30 @@ def leggi_csv_da_zip_remoto(url):
     dfs = []
     with zipfile.ZipFile(BytesIO(r.content)) as z:
         for nome in sorted(z.namelist()):
-            if nome.endswith(".csv"):
+            if nome.lower().endswith(".csv"):
                 with z.open(nome) as f:
-                    # Leggi saltando eventuali righe di intestazione descrittiva prima del header reale
-                    raw_lines = [f.readline().decode("latin1") for _ in range(5)]
+                    prime_righe = [f.readline().decode("utf-8", errors="replace") for _ in range(8)]
                     skip = 0
-                    for idx, line in enumerate(raw_lines):
-                        if ";" in line and ("Codice" in line or "PRO_COM" in line or "Anno" in line or "Comune" in line):
+                    sep = ","
+                    for idx, line in enumerate(prime_righe):
+                        if any(k in line for k in ["Codice", "PRO_COM", "Comune", "Territorio", "Anno"]):
                             skip = idx
+                            sep = ";" if line.count(";") >= line.count(",") else ","
                             break
                     f.seek(0)
-                    df = pd.read_csv(f, sep=";", encoding="latin1", skiprows=skip, low_memory=False)
+                    df = pd.read_csv(f, sep=sep, skiprows=skip, encoding="utf-8", encoding_errors="replace", low_memory=False)
+                    df.columns = [str(c).strip().replace('"', '') for c in df.columns]
                     dfs.append(df)
     return pd.concat(dfs, ignore_index=True) if dfs else pd.DataFrame()
+
+def trova_colonna(df, parole_chiave, esclusi=None):
+    esclusi = esclusi or []
+    for k in parole_chiave:
+        for c in df.columns:
+            cl = c.lower()
+            if k.lower() in cl and not any(e.lower() in cl for e in esclusi):
+                return c
+    return None
 
 def carica_dati_demo_istat():
     pop_storica = {}  # {cod_6_cifre: {anno: int}}
@@ -45,23 +56,23 @@ def carica_dati_demo_istat():
         if pd.notna(val) and val > 0:
             pop_storica.setdefault(cod, {})[str(anno)] = int(round(val))
 
-    # 1. Ricostruzione 2002-2019 (file unico nazionale per tutti i comuni ai confini 2019)
-    url_ric = "https://demo.istat.it/data/ricostruzione/PopolazioneEta-Territorio-Comuni.zip"
-    print(f"Scaricamento ricostruzione 2002-2019: {url_ric}")
+    # 1. Ricostruzione 2002-2019 (PopolazioneEta-Territorio-Comuni.zip)
+    url_ric = "https://istat.it"
+    print(f"Scaricamento RIC: {url_ric}")
     df_ric = leggi_csv_da_zip_remoto(url_ric)
-    print(f"Colonne RIC: {df_ric.columns.tolist()[:15]}")
+    print("Colonne effettive RIC:", df_ric.columns.tolist())
 
-    col_cod_ric = [c for c in df_ric.columns if "Codice" in c or "PRO_COM" in c][0]
-    # Filtra solo il totale per età se presente la colonna Età
-    col_eta = [c for c in df_ric.columns if "Et" in c and len(c) <= 5]
+    col_cod_ric = trova_colonna(df_ric, ["Codice", "PRO_COM", "ITTER"])
+    col_eta = trova_colonna(df_ric, ["Età", "Eta"])
     if col_eta:
-        df_ric = df_ric[df_ric[col_eta[0]].astype(str).str.contains("Totale|999", na=True)]
+        df_ric = df_ric[df_ric[col_eta].astype(str).str.contains("Totale|999", case=False, na=True)]
 
-    if "Anno" in df_ric.columns:
-        col_tot = [c for c in df_ric.columns if "Totale" in c or "Popolazione" in c][-1]
+    col_anno = trova_colonna(df_ric, ["Anno"])
+    if col_anno:
+        col_tot = trova_colonna(df_ric, ["Totale", "Popolazione", "Valore", "OBS_VALUE"], esclusi=["Codice", "Età", "Eta"])
         for _, row in df_ric.iterrows():
             cod = str(row[col_cod_ric]).strip().zfill(6)
-            salva_pop(cod, int(row["Anno"]), pd.to_numeric(row[col_tot], errors="coerce"))
+            salva_pop(cod, int(float(row[col_anno])), pd.to_numeric(row[col_tot], errors="coerce"))
     else:
         for _, row in df_ric.iterrows():
             cod = str(row[col_cod_ric]).strip().zfill(6)
@@ -69,48 +80,41 @@ def carica_dati_demo_istat():
                 if str(a) in df_ric.columns:
                     salva_pop(cod, a, pd.to_numeric(row[str(a)], errors="coerce"))
 
-    # 2. Bilanci demografici nazionali D7B (2019-2026) con popolazione e variazioni territoriali
+    # 2. Bilanci demografici D7B (2019-2026)
     for anno in range(2019, 2027):
-        url_d7b = f"https://demo.istat.it/data/d7b/D7B{anno}.csv.zip"
-        r_check = requests.head(url_d7b, headers=HEADERS, timeout=30)
-        if r_check.status_code != 200:
-            print(f"Info: {url_d7b} non ancora pubblicato (status {r_check.status_code})")
+        url_d7b = f"https://istat.it{anno}.csv.zip"
+        if requests.head(url_d7b, headers=HEADERS, timeout=30).status_code != 200:
             continue
 
-        print(f"Scaricamento bilancio {anno}: {url_d7b}")
         df_b = leggi_csv_da_zip_remoto(url_d7b)
         if anno == 2019:
-            print(f"Colonne D7B: {df_b.columns.tolist()}")
+            print("Colonne effettive D7B:", df_b.columns.tolist())
 
-        col_cod = [c for c in df_b.columns if "Codice" in c or "PRO_COM" in c][0]
-        # Nei file D7B mensili/annuali prendiamo l'ultimo mese disponibile (es. Dicembre o max Mese)
-        col_mese = [c for c in df_b.columns if "Mese" in c]
+        col_cod = trova_colonna(df_b, ["Codice Comune", "Codice", "PRO_COM"])
+        col_mese = trova_colonna(df_b, ["Mese"])
+        col_var = trova_colonna(df_b, ["variazioni territoriali", "territorial"])
+        col_pop = trova_colonna(df_b, ["Popolazione fine periodo", "fine periodo", "Popolazione", "Totale"], esclusi=["Codice", "inizio"])
+
+        df_b["_COD"] = df_b[col_cod].astype(str).str.strip().str.zfill(6)
+
+        if col_var:
+            var_annua = df_b.groupby("_COD")[col_var].apply(lambda s: pd.to_numeric(s, errors="coerce").fillna(0).sum())
+            for cod, v_sum in var_annua.items():
+                if v_sum != 0:
+                    spostamenti[(cod, str(anno))] = int(round(v_sum))
+
         if col_mese:
-            df_b[col_mese[0]] = pd.to_numeric(df_b[col_mese[0]], errors="coerce")
-            # Somma le variazioni territoriali su tutti i mesi dell'anno
-            col_var = [c for c in df_b.columns if "territorial" in c.lower()]
-            if col_var:
-                var_annua = df_b.groupby(df_b[col_cod].astype(str).str.strip().str.zfill(6))[col_var[0]].apply(
-                    lambda s: pd.to_numeric(s, errors="coerce").fillna(0).sum()
-                )
-                for cod, v_sum in var_annua.items():
-                    if v_sum != 0:
-                        spostamenti[(cod, str(anno))] = int(round(v_sum))
+            df_b[col_mese] = pd.to_numeric(df_b[col_mese], errors="coerce")
+            df_b = df_b.sort_values(col_mese).groupby("_COD", as_index=False).last()
 
-            # Per la popolazione residente prendi l'ultimo mese disponibile nell'anno per ciascun comune
-            df_b = df_b.sort_values(col_mese[0]).groupby(col_cod, as_index=False).last()
-
-        col_pop = [c for c in df_b.columns if "fine" in c.lower() or "Popolazione" in c or "Totale" in c][-1]
         for _, row in df_b.iterrows():
-            cod = str(row[col_cod]).strip().zfill(6)
-            salva_pop(cod, anno, pd.to_numeric(row[col_pop], errors="coerce"))
+            salva_pop(row["_COD"], anno, pd.to_numeric(row[col_pop], errors="coerce"))
 
-    # Controllo di sicurezza anti-zero (verifica Roma = 058091)
     roma_2002 = pop_storica.get("058091", {}).get("2002", 0)
     roma_2025 = pop_storica.get("058091", {}).get("2025", 0)
-    print(f"Verifica Roma (058091): 2002 = {roma_2002:,} | 2025 = {roma_2025:,}")
-    if roma_2002 == 0:
-        raise RuntimeError("BLOCCO DI SICUREZZA: Roma 2002 risulta ancora 0, controlla nomi colonne nei log.")
+    print(f"VERIFICA ROMA (058091): 2002 = {roma_2002} | 2025 = {roma_2025}")
+    if roma_2002 == 0 or roma_2025 == 0:
+        raise RuntimeError(f"ERRORE: Dati incompleti per Roma (2002={roma_2002}, 2025={roma_2025}). Leggi le colonne stampate sopra!")
 
     return pop_storica, spostamenti
 
@@ -184,13 +188,17 @@ def ricostruisci():
         riga_csv["note_ricostruzione"] = nota_str
 
         risultati_json.append({
-            "codice_istat": cod_2026,
-            "denominazione": denom,
-            "sigla_prov": sigla,
-            "note": nota_str,
-            "serie": {a: {"v": serie_comuni[cod_2026][a], "t": tipi_comuni[cod_2026][a]} for a in ANNI}
+            "c": cod_2026,
+            "n": denom,
+            "p": sigla,
+            "m": nota_str,
+            "v": [serie_comuni[cod_2026][a] for a in ANNI],
+            "t": "".join([tipi_comuni[cod_2026][a] for a in ANNI])
         })
         risultati_csv.append(riga_csv)
 
     os.makedirs("data", exist_ok=True)
     pd.DataFrame(risultati_csv).to_csv("data/popolazione_2026.csv", index=False, encoding="utf-8")
+    with open("data/popolazione_2026.json", "w", encoding="utf-8") as f:
+        json.dump(risultati_json, f, ensure_ascii=False, separators=(",", ":"))
+
