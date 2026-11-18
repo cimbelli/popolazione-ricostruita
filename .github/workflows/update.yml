@@ -40,6 +40,6 @@ jobs:
         run: |
           git config user.name "github-actions[bot]"
           git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
-          git add -A data/popolazione_2026.json data/popolazione_2026.csv api/
+          git add data/popolazione_2026.json data/popolazione_2026.csv
           git commit -m "Aggiornamento automatico serie storica $(date +'%Y-%m-%d')" || exit 0
           git push
