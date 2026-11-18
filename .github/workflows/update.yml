@@ -8,9 +8,14 @@ on:
 permissions:
   contents: write
 
+concurrency:
+  group: build-data
+  cancel-in-progress: false
+
 jobs:
   build-data:
     runs-on: ubuntu-latest
+    timeout-minutes: 60
     steps:
       - name: Checkout repository
         uses: actions/checkout@v4
@@ -20,22 +25,21 @@ jobs:
         with:
           python-version: '3.12'
 
-      - name: Installa dipendenze e opensituas
-        run: |
-          pip install pandas requests opensituas
+      - name: Installa dipendenze
+        run: pip install pandas requests opensituas
 
-      - name: Estrai variazioni SITUAS e ricostruisci popolazione
-        run: |
-          mkdir -p data/raw
-          opensituas -o json get 61 --out data/raw/comuni_attuali.json
-          opensituas -o json get 129 --out data/raw/variazioni_storiche.json
-          opensituas -o json get 99 --from 01/01/2019 --to 31/12/2026 --out data/raw/raccordo_2019_2026.json
-          python scripts/build_series.py
+      - name: Scarica dati Istat/SITUAS e ricostruisci la serie
+        # Se lo script fallisce (es. URL o formati Istat cambiati) l'Action diventa rossa
+        # e i dati pubblicati NON vengono sovrascritti. Per forzare l'URL del file comuni
+        # della ricostruzione 2002-2019 imposta la variabile di repository RIC_URL.
+        env:
+          RIC_URL: ${{ vars.RIC_URL }}
+        run: python scripts/build_series.py
 
       - name: Salva e pubblica i nuovi dataset
         run: |
           git config user.name "github-actions[bot]"
-          git config user.email "github-actions[bot]@://github.com"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
           git add data/popolazione_2026.json data/popolazione_2026.csv
           git commit -m "Aggiornamento automatico serie storica $(date +'%Y-%m-%d')" || exit 0
           git push
