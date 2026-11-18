@@ -69,6 +69,7 @@
   <div class="actions">
     <button class="light" id="dl1">Scarica CSV di questo comune</button>
     <button class="light" id="link">Copia link</button>
+    <a class="btn light" id="apilink" target="_blank">JSON (API)</a>
   </div>
 </section>
 
@@ -91,7 +92,8 @@
       INDEX = COMUNI.map(x => norm(x.n) + ' ' + x.c);
       const a = META.anni;
       $('sub').textContent = `Serie 1° gennaio ${a[0]}–${a[a.length - 1]}, ricostruita sui ${COMUNI.length.toLocaleString('it-IT')} comuni vigenti al ${META.confini_al}. Fonti: Istat (demo.istat.it, SITUAS).`;
-      $('footer').innerHTML = 'Aggiornato il ' + META.aggiornato + '. Fonti: ' + Object.entries(META.fonti).map(([k, v]) => `<b>${k}</b>: ${v}`).join(' · ');
+      $('footer').innerHTML = 'Aggiornato il ' + META.aggiornato + '. Fonti: ' + Object.entries(META.fonti).map(([k, v]) => `<b>${k}</b>: ${v}`).join(' · ') +
+        '<br>API JSON: <a href="api/v1/index.json">api/v1/</a> (comuni/{codice}.json, anni/{anno}.json, province/{sigla}.json, regioni/{id}.json) · <a href="https://github.com/cimbelli/popolazione-ricostruita#api">documentazione</a>';
       $('status').textContent = '';
       $('q').disabled = false; $('q').focus();
       const h = location.hash.slice(1);
@@ -138,6 +140,7 @@
     history.replaceState(null, '', '#' + x.c);
     const anni = META.anni, v = x.v;
     $('card').style.display = 'block';
+    $('apilink').href = 'api/v1/comuni/' + x.c + '.json';
     $('titolo').textContent = `${x.n} (${x.p}) · codice Istat ${x.c}`;
     $('note').textContent = x.m || 'Nessuna variazione territoriale dal 2002.';
     const first = v.findIndex(n => n != null), last = v.length - 1;

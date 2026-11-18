@@ -29,3 +29,28 @@ Se Istat cambia l'indirizzo del file comuni della ricostruzione, si può forzare
 ## File
 * `data/popolazione_2026.csv` – una riga per comune, una colonna per anno, più colonne di tracciabilità
 * `data/popolazione_2026.json` – stessi dati in forma compatta per la pagina web
+
+## API
+File JSON statici, aggiornati insieme ai dati e serviti da GitHub Pages (CORS aperto, chiamabili da qualsiasi sito o script).
+Base: `https://cimbelli.github.io/popolazione-ricostruita/api/v1/`
+
+| Endpoint | Contenuto |
+|---|---|
+| `index.json` | elenco dei comuni vigenti (codice, nome, sigla, regione) + metadati |
+| `meta.json` | fonti, data di aggiornamento, confini di riferimento, totali Italia per anno |
+| `comuni/{codice}.json` | serie 2002-2026 di un comune, con il tipo di ogni valore e le note (es. `comuni/058091.json`) |
+| `anni/{anno}.json` | tutti i comuni in un anno: `{codice: popolazione}` (es. `anni/2010.json`) |
+| `province/{sigla}.json` | totale provinciale per anno e serie di ogni comune (es. `province/RM.json`) |
+| `regioni/index.json`, `regioni/{id}.json` | totale regionale per anno (es. `regioni/lazio.json`) |
+
+Esempi:
+```bash
+curl -s https://cimbelli.github.io/popolazione-ricostruita/api/v1/comuni/058091.json
+```
+```python
+import pandas as pd
+s = pd.read_json("https://cimbelli.github.io/popolazione-ricostruita/api/v1/comuni/058091.json")["serie"]
+```
+```r
+jsonlite::fromJSON("https://cimbelli.github.io/popolazione-ricostruita/api/v1/anni/2010.json")$comuni
+```
