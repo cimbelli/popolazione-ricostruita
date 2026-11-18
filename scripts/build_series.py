@@ -151,12 +151,15 @@ def col(df: pd.DataFrame, *chiavi: str, escludi: tuple[str, ...] = ()) -> str | 
 
 
 def a_numero(s: pd.Series) -> pd.Series:
-    return pd.to_numeric(s.astype(str).str.replace(".", "", regex=False).str.replace(",", ".", regex=False).str.strip(),
+    return pd.to_numeric(s.fillna("").astype(object).map(str).str.replace(".", "", regex=False).str.replace(",", ".", regex=False).str.strip(),
                          errors="coerce").fillna(0)
 
 
 def codice6(s: pd.Series) -> pd.Series:
-    return s.astype(str).str.strip().str.replace(r"\.0$", "", regex=True).str.zfill(6)
+    # fillna: con pandas 3 i valori mancanti restano NaN anche dopo astype(str)
+    x = s.fillna("").astype(object).map(str).str.strip().str.replace(r"\.0$", "", regex=True)
+    x = x.where(~x.str.lower().isin(["", "nan", "none", "<na>"]), "")
+    return x.where(x == "", x.str.zfill(6))
 
 
 def colonne_totale(cols: list[str]) -> list[str]:
@@ -499,9 +502,9 @@ def comuni_vigenti() -> pd.DataFrame:
     c_reg = next((c for c in df.columns if norm(c) in ("den_reg", "regione", "denominazione regione")), None) or col(df, "den_reg", "regione", escludi=("cod",))
     out = pd.DataFrame({
         "codice": codice6(df[c_cod]),
-        "nome": df[c_nom].astype(str).str.strip(),
-        "sigla": df[c_sig].astype(str).str.strip() if c_sig else "",
-        "regione": df[c_reg].astype(str).str.strip() if c_reg else "",
+        "nome": df[c_nom].fillna("").astype(object).map(str).str.strip(),
+        "sigla": df[c_sig].fillna("").astype(object).map(str).str.strip() if c_sig else "",
+        "regione": df[c_reg].fillna("").astype(object).map(str).str.strip() if c_reg else "",
     }).drop_duplicates("codice").sort_values("codice").reset_index(drop=True)
     return out
 
@@ -530,7 +533,7 @@ def raccordo(anno: int, data_fine: str) -> dict[str, set[str]]:
         log(f"SITUAS 99 colonne: {list(df.columns)} -> origine={c_in}, destinazione={c_fi}")
     m: dict[str, set[str]] = defaultdict(set)
     for a, b in zip(codice6(df[c_in]), codice6(df[c_fi])):
-        if re.fullmatch(r"\d{6}", a) and re.fullmatch(r"\d{6}", b):
+        if isinstance(a, str) and isinstance(b, str) and re.fullmatch(r"\d{6}", a) and re.fullmatch(r"\d{6}", b):
             m[a].add(b)
     return m
 
