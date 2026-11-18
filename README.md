@@ -16,8 +16,13 @@ Per ogni anno il codice di ciascun comune viene portato al codice vigente oggi c
 * **S** – più comuni di allora confluiti in uno attuale (fusione/incorporazione): somma
 * **P** – comune di allora diviso tra più comuni attuali e non più esistente: ripartizione in proporzione alla popolazione attuale dei comuni di destinazione
 
-Le cessioni parziali di territorio tra comuni che continuano a esistere non vengono riproporzionate
-(il comune cedente tiene tutta la popolazione negli anni precedenti); compaiono nelle note.
+* **P** anche per i comuni **nati da una parte di un altro** (es. Misiliscemi, staccato da Trapani nel 2021):
+  nel primo anno in cui il comune nuovo esiste si calcola la sua quota sul totale "cedente + nuovo"
+  (con più cedenti, ripartita in base al calo di ciascuno); negli anni precedenti la popolazione del cedente
+  ai confini vecchi viene divisa con quella quota. Cedente e comune nuovo sono marcati come stima, i totali non cambiano.
+
+Le cessioni di territorio tra due comuni che esistevano già entrambi non vengono riproporzionate
+(manca il dato sulla popolazione trasferita); compaiono nelle note.
 
 Lo script si ferma con errore se i totali nazionali non sono plausibili o se il raccordo perde popolazione:
 in quel caso l'Action fallisce e i dati pubblicati non vengono toccati.
