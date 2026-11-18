@@ -45,6 +45,8 @@ from collections import defaultdict
 from datetime import date
 from urllib.parse import urljoin
 
+import shutil
+
 import pandas as pd
 import requests
 
@@ -527,7 +529,7 @@ def ricostruisci():
 
     # 5. Output
     vig = vig.set_index("codice")
-    righe_csv, comuni_json = [], []
+    righe_csv, comuni_json, righe_api = [], [], []
     for c in sorted(vigenti):
         r = vig.loc[c]
         valori = [serie[c].get(a) for a in anni]
@@ -540,6 +542,8 @@ def ricostruisci():
         riga["anni_stima_proporzionale"] = ",".join(str(a) for a in anni if tipo[c][a] == "P")
         riga["note"] = nota
         righe_csv.append(riga)
+        righe_api.append({"codice": c, "comune": r["nome"], "sigla": r["sigla"], "regione": r["regione"],
+                          "valori": valori, "tipi": "".join(tipo[c][a] for a in anni), "note": nota})
 
     meta = {
         "aggiornato": date.today().isoformat(),
@@ -556,7 +560,71 @@ def ricostruisci():
     pd.DataFrame(righe_csv).to_csv(os.path.join(OUT_DIR, "popolazione_2026.csv"), index=False, encoding="utf-8")
     with open(os.path.join(OUT_DIR, "popolazione_2026.json"), "w", encoding="utf-8") as f:
         json.dump({"meta": meta, "comuni": comuni_json}, f, ensure_ascii=False, separators=(",", ":"))
+    scrivi_api(righe_api, anni, meta)
     log(f"Scritti {len(comuni_json)} comuni, anni {anni[0]}-{anni[-1]}")
+
+
+# --------------------------------------------------------------------------
+# API statica (servita da GitHub Pages sotto /api/v1/)
+# --------------------------------------------------------------------------
+TIPI = {"R": "dato Istat", "S": "somma fusione", "P": "stima proporzionale", "-": "mancante"}
+
+
+def scrivi_json(percorso: str, obj) -> None:
+    os.makedirs(os.path.dirname(percorso), exist_ok=True)
+    with open(percorso, "w", encoding="utf-8") as f:
+        json.dump(obj, f, ensure_ascii=False, separators=(",", ":"))
+
+
+def scrivi_api(righe: list[dict], anni: list[int], meta: dict, base: str = "api/v1") -> None:
+    """righe: [{codice, comune, sigla, regione, valori, tipi, note}]"""
+    if os.path.isdir(base):
+        shutil.rmtree(base)  # niente file orfani di comuni soppressi
+    indice = [{"codice": r["codice"], "comune": r["comune"], "sigla": r["sigla"], "regione": r["regione"]} for r in righe]
+    scrivi_json(f"{base}/index.json", {"meta": meta, "comuni": indice})
+    scrivi_json(f"{base}/meta.json", meta)
+
+    for r in righe:
+        scrivi_json(f"{base}/comuni/{r['codice']}.json", {
+            "codice": r["codice"], "comune": r["comune"], "sigla": r["sigla"], "regione": r["regione"],
+            "confini_al": meta["confini_al"],
+            "serie": [{"anno": a, "popolazione": v, "tipo": TIPI[t]} for a, v, t in zip(anni, r["valori"], r["tipi"])],
+            "note": r["note"],
+        })
+
+    for i, a in enumerate(anni):
+        scrivi_json(f"{base}/anni/{a}.json", {
+            "anno": a, "confini_al": meta["confini_al"], "totale_italia": meta["totali_italia"][str(a)],
+            "comuni": {r["codice"]: r["valori"][i] for r in righe},
+        })
+
+    def aggrega(gruppo: list[dict]) -> list:
+        return [sum(r["valori"][i] or 0 for r in gruppo) for i in range(len(anni))]
+
+    per_prov = defaultdict(list)
+    per_reg = defaultdict(list)
+    for r in righe:
+        per_prov[r["sigla"]].append(r)
+        per_reg[r["regione"]].append(r)
+    for sigla, gruppo in per_prov.items():
+        if not sigla:
+            continue
+        scrivi_json(f"{base}/province/{sigla}.json", {
+            "sigla": sigla, "regione": gruppo[0]["regione"], "anni": anni, "totale": aggrega(gruppo),
+            "comuni": {r["codice"]: {"comune": r["comune"], "valori": r["valori"]} for r in gruppo},
+        })
+    regioni = []
+    for nome, gruppo in per_reg.items():
+        if not nome:
+            continue
+        slug = re.sub(r"[^a-z0-9]+", "-", norm(nome)).strip("-")
+        regioni.append({"regione": nome, "id": slug})
+        scrivi_json(f"{base}/regioni/{slug}.json", {
+            "regione": nome, "anni": anni, "totale": aggrega(gruppo),
+            "province": sorted({r["sigla"] for r in gruppo}),
+        })
+    scrivi_json(f"{base}/regioni/index.json", sorted(regioni, key=lambda x: x["id"]))
+    log(f"API: {len(righe)} comuni, {len(anni)} anni, {len(per_prov)} province, {len(regioni)} regioni in {base}/")
 
 
 if __name__ == "__main__":
