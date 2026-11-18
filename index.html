@@ -3,6 +3,8 @@
 <head>
 <meta charset="UTF-8">
 <meta name="viewport" content="width=device-width, initial-scale=1.0">
+<meta http-equiv="Content-Security-Policy" content="default-src 'self'; script-src 'self' 'unsafe-inline'; style-src 'self' 'unsafe-inline'; img-src 'self' data:; connect-src 'self'; object-src 'none'; base-uri 'none'; form-action 'none'">
+<meta name="referrer" content="no-referrer">
 <title>Popolazione dei comuni italiani 2002–2026 ai confini attuali</title>
 <style>
   :root { --ink:#1e293b; --muted:#64748b; --line:#e2e8f0; --bg:#f8fafc; --accent:#2563eb; --sum:#0369a1; --est:#b45309; }
@@ -79,6 +81,7 @@
 (() => {
   const $ = id => document.getElementById(id);
   const fmt = n => n == null ? '–' : n.toLocaleString('it-IT');
+  const esc = s => String(s ?? '').replace(/[&<>"']/g, c => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[c]));
   const norm = s => s.normalize('NFD').replace(/[̀-ͯ]/g, '').toLowerCase();
   let META, COMUNI = [], INDEX = [], BYCODE = new Map(), current = null, active = -1;
 
@@ -92,7 +95,7 @@
       INDEX = COMUNI.map(x => norm(x.n) + ' ' + x.c);
       const a = META.anni;
       $('sub').textContent = `Serie 1° gennaio ${a[0]}–${a[a.length - 1]}, ricostruita sui ${COMUNI.length.toLocaleString('it-IT')} comuni vigenti al ${META.confini_al}. Fonti: Istat (demo.istat.it, SITUAS).`;
-      $('footer').innerHTML = 'Aggiornato il ' + META.aggiornato + '. Fonti: ' + Object.entries(META.fonti).map(([k, v]) => `<b>${k}</b>: ${v}`).join(' · ') +
+      $('footer').innerHTML = 'Aggiornato il ' + esc(META.aggiornato) + '. Fonti: ' + Object.entries(META.fonti).map(([k, v]) => `<b>${esc(k)}</b>: ${esc(v)}`).join(' · ') +
         '<br>API JSON: <a href="api/v1/index.json">api/v1/</a> (comuni/{codice}.json, anni/{anno}.json, province/{sigla}.json, regioni/{id}.json) · <a href="https://github.com/cimbelli/popolazione-ricostruita#api">documentazione</a>';
       $('status').textContent = '';
       $('q').disabled = false; $('q').focus();
@@ -115,7 +118,7 @@
   }
   function renderSugg(list) {
     active = -1;
-    $('sugg').innerHTML = list.map((x, i) => `<li role="option" data-c="${x.c}"><span>${x.n} (${x.p})</span><small>${x.c}</small></li>`).join('');
+    $('sugg').innerHTML = list.map((x, i) => `<li role="option" data-c="${esc(x.c)}"><span>${esc(x.n)} (${esc(x.p)})</span><small>${esc(x.c)}</small></li>`).join('');
   }
   $('q').addEventListener('input', e => renderSugg(search(e.target.value)));
   $('q').addEventListener('keydown', e => {
@@ -140,7 +143,7 @@
     history.replaceState(null, '', '#' + x.c);
     const anni = META.anni, v = x.v;
     $('card').style.display = 'block';
-    $('apilink').href = 'api/v1/comuni/' + x.c + '.json';
+    $('apilink').href = 'api/v1/comuni/' + encodeURIComponent(x.c) + '.json';
     $('titolo').textContent = `${x.n} (${x.p}) · codice Istat ${x.c}`;
     $('note').textContent = x.m || 'Nessuna variazione territoriale dal 2002.';
     const first = v.findIndex(n => n != null), last = v.length - 1;
@@ -174,7 +177,7 @@
     g += `<polyline points="${pts}" fill="none" stroke="#0f172a" stroke-width="2"/>`;
     v.forEach((n, i) => { if (n == null) return;
       const c = t[i] === 'S' ? '#0369a1' : t[i] === 'P' ? '#d97706' : '#0f172a';
-      g += `<circle cx="${x(i)}" cy="${y(n)}" r="${t[i] === 'R' ? 3 : 5}" fill="${c}"><title>${anni[i]}: ${fmt(n)}</title></circle>`; });
+      g += `<circle cx="${x(i)}" cy="${y(n)}" r="${t[i] === 'R' ? 3 : 5}" fill="${c}"><title>${esc(anni[i])}: ${fmt(n)}</title></circle>`; });
     return `<svg viewBox="0 0 ${W} ${H}" role="img" aria-label="Andamento della popolazione">${g}</svg>`;
   }
 
