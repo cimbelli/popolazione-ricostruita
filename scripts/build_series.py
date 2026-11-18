@@ -98,19 +98,26 @@ def _decodifica(raw: bytes) -> str:
 
 
 def leggi_csv(raw: bytes) -> pd.DataFrame:
-    """Legge un CSV Istat saltando le eventuali righe di titolo iniziali."""
+    """Legge un CSV Istat saltando le righe di titolo iniziali.
+
+    L'intestazione è la prima riga con almeno 3 campi seguita da una riga con lo stesso
+    numero di campi; le righe di titolo vengono conservate in df.attrs["titolo"]."""
     testo = _decodifica(raw)
     righe = testo.splitlines()
-    start = 0
-    for i, r in enumerate(righe[:15]):
-        rl = r.lower()
-        if ("codice" in rl or "territorio" in rl or "itter" in rl) and (";" in r or "," in r or "\t" in r):
-            start = i
-            break
-    header = righe[start]
-    sep = max([";", ",", "\t", "|"], key=header.count)
-    df = pd.read_csv(io.StringIO("\n".join(righe[start:])), sep=sep, dtype=str, keep_default_na=False)
+    best = None  # (indice riga, separatore)
+    for sep in (";", ",", "\t", "|"):
+        for i in range(min(30, len(righe) - 1)):
+            n = len(next(csv.reader([righe[i]], delimiter=sep)))
+            if n >= 3 and len(next(csv.reader([righe[i + 1]], delimiter=sep))) == n:
+                if best is None or i < best[0] or (i == best[0] and n > best[2]):
+                    best = (i, sep, n)
+                break
+    start, sep = (best[0], best[1]) if best else (0, ";")
+    df = pd.read_csv(io.StringIO("\n".join(righe[start:])), sep=sep, dtype=str, keep_default_na=False,
+                     on_bad_lines="skip")
     df.columns = [str(c).strip().strip('"').strip() for c in df.columns]
+    df.attrs["titolo"] = " ".join(righe[:start])
+    df.attrs["anteprima"] = righe[:start + 3]
     return df
 
 
@@ -123,7 +130,9 @@ def csv_da_zip(raw: bytes) -> list[tuple[str, pd.DataFrame]]:
             if nl.endswith(".zip"):
                 out.extend(csv_da_zip(z.read(nome)))
             elif nl.endswith(".csv") or nl.endswith(".txt"):
-                out.append((nome, leggi_csv(z.read(nome))))
+                df = leggi_csv(z.read(nome))
+                df.attrs["file"] = nome
+                out.append((nome, df))
     return out
 
 
@@ -177,17 +186,31 @@ def filtra_eta_totale(df: pd.DataFrame) -> pd.DataFrame:
 
 def popolazione_da_df(df: pd.DataFrame, anno: int | None = None) -> dict[str, dict[int, int]]:
     """Restituisce {codice: {anno: popolazione}} da un CSV demo (formato largo o lungo)."""
-    c_cod = col(df, "codice comune", "pro_com", "cod_com", "codice", "itter")
+    c_cod = col(df, "codice comune", "codice istat", "pro_com", "cod_com", "cod. comune", "itter",
+                escludi=("stato", "cittadin", "paese", "provinc", "region"))
     if not c_cod:
-        raise ValueError(f"colonna codice comune non trovata: {list(df.columns)}")
-    df = filtra_eta_totale(df.copy())
-    # file per cittadinanza/paese: se c'è una riga di totale usa solo quella
-    c_citt = col(df, "cittadinanza", "paese", "citizenship", "country")
-    if c_citt:
-        v = df[c_citt].astype(str).map(norm)
-        tot = v.isin(["totale", "total", "mondo", "world", "tutte", "tutti i paesi"])
+        c_cod = col(df, "codice", escludi=("stato", "cittadin", "paese", "provinc", "region", "eta"))
+    df = df.copy()
+    if not c_cod:
+        m = re.search(r"(?<!\d)(\d{6})(?!\d)", df.attrs.get("titolo", "") + " " + df.attrs.get("file", ""))
+        if not m:
+            raise ValueError(f"colonna codice comune non trovata: {list(df.columns)}")
+        c_cod = "_CODTITOLO"
+        df[c_cod] = m.group(1)
+    df = filtra_eta_totale(df)
+    # file per cittadinanza/paese: contengono Paesi + subtotali (zona, continente, mondo).
+    # Si tiene solo la riga del totale generale.
+    desc = [c for c in df.columns if any(k in norm(c) for k in ("cittadinanza", "paese", "zona", "continente", "country", "citizenship"))
+            and "codice" not in norm(c)]
+    per_paese = bool(desc)
+    if desc:
+        marcatori = {"totale", "total", "mondo", "world", "totale generale", "tutte", "tutti i paesi", "totale mondo"}
+        tot = pd.Series(False, index=df.index)
+        for c in desc:
+            tot |= df[c].astype(str).map(norm).isin(marcatori)
         if tot.any():
             df = df[tot]
+            per_paese = False
     df["_COD"] = codice6(df[c_cod])
     df = df[df["_COD"].str.fullmatch(r"\d{6}")]
     out: dict[str, dict[int, int]] = defaultdict(dict)
@@ -204,7 +227,7 @@ def popolazione_da_df(df: pd.DataFrame, anno: int | None = None) -> dict[str, di
             raise ValueError(f"colonna totale non trovata: {list(df.columns)}")
         df["_V"] = sum(a_numero(df[c]) for c in cols)
         df["_A"] = pd.to_numeric(df[c_anno], errors="coerce") if c_anno else anno
-        g = df.groupby(["_COD", "_A"])["_V"].sum()
+        g = df.groupby(["_COD", "_A"])["_V"].max() if per_paese and len(desc) > 1 else df.groupby(["_COD", "_A"])["_V"].sum()
         for (cod, a), v in g.items():
             if pd.notna(a):
                 out[cod][int(a)] = int(round(v))
@@ -251,7 +274,7 @@ def trova_url_ricostruzione() -> list[str]:
     trovati = list(dict.fromkeys(trovati))
     # preferisci il file unico "Comuni", poi i file per provincia della ricostruzione
     comuni = [l for l in trovati if re.search(r"comun|municip", l, re.I) and not re.search(r"bilanc|rbd", l, re.I)]
-    return comuni
+    return sorted(comuni, key=lambda l: 0 if "territorio" in l.lower() else 1)
 
 
 def carica_ricostruzione(anni_validi: set[int]) -> tuple[dict, str]:
@@ -263,15 +286,24 @@ def carica_ricostruzione(anni_validi: set[int]) -> tuple[dict, str]:
         if not raw:
             continue
         try:
-            for nome, df in csv_da_zip(raw):
-                log(f"  {nome}: colonne {list(df.columns)[:12]}{' ...' if len(df.columns) > 12 else ''}")
+            files = csv_da_zip(raw)
+            log(f"  {len(files)} file CSV nello zip")
+            for i, (nome, df) in enumerate(files):
+                if i == 0:
+                    log(f"  {nome}: colonne {list(df.columns)[:12]}{' ...' if len(df.columns) > 12 else ''}")
+                    for r in df.attrs.get("anteprima", []):
+                        log(f"    | {r[:200]}")
                 unisci(pop, popolazione_da_df(df), anni_validi)
         except Exception as e:  # formato inatteso: prova il link successivo
             log(f"  lettura fallita: {e}")
             pop = defaultdict(dict)
             continue
-        if pop:
+        tot = {a: sum(s.get(a, 0) for s in pop.values()) for a in sorted(anni_validi)}
+        log("  totali Italia: " + ", ".join(f"{a}={t:,}" for a, t in tot.items()))
+        if pop and all(50_000_000 < t < 65_000_000 for t in tot.values()):
             return pop, f"Ricostruzione intercensuaria ({url})"
+        log("  totali non plausibili, scarto questa fonte")
+        pop = defaultdict(dict)
 
     log("RIC non disponibile: ripiego sui file RCS (cittadinanza) per anno")
     for anno in sorted(anni_validi):
