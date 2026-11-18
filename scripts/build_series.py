@@ -52,6 +52,7 @@ import requests
 
 DEMO = "https://demo.istat.it"
 POSAS_URL = DEMO + "/data/posas/POSAS_{anno}_it_Comuni.zip"
+P2_URL = DEMO + "/data/p2/P2_{anno}_it_Comuni.zip"  # bilancio demografico annuale (dal 2019)
 RCS_URL = DEMO + "/data/rcs/Dati_RCS_cittadinanza_{anno}.zip"
 RIC_PAGES = [DEMO + "/app/?i=RIC&l=it", DEMO + "/app/?i=RIC&l=en"]
 
@@ -581,6 +582,96 @@ def variazioni_note(vigenti: set[str]) -> tuple[dict[str, list[str]], list[tuple
     return note, eventi
 
 
+def carica_variazioni_territoriali(anni: list[int]) -> dict[int, dict[str, int]]:
+    """Bilancio demografico P2: per anno Y {codice: unità in più/meno dovute a variazioni territoriali}
+    avvenute durante l'anno Y (effetto sulla popolazione al 1/1/Y+1)."""
+    out: dict[int, dict[str, int]] = {}
+    for Y in anni:
+        raw = scarica(P2_URL.format(anno=Y))
+        if not raw:
+            log(f"P2 {Y}: non disponibile")
+            continue
+        try:
+            for nome, df in csv_da_zip(raw):
+                cols_var = [c for c in df.columns if "variazioni territ" in norm(c)]
+                c_cod = col(df, "codice comune", "codice istat", "pro_com", escludi=("provinc", "region"))
+                if not (cols_var and c_cod):
+                    log(f"P2 {Y} {nome}: colonne non riconosciute {list(df.columns)}")
+                    continue
+                c_sesso = col(df, "sesso", "sex")
+                if c_sesso:
+                    v = df[c_sesso].fillna("").astype(object).map(str).map(norm)
+                    if v.str.startswith("total").any():
+                        df = df[v.str.startswith("total")]
+                # colonna del totale; se divisa per sesso, somma maschi + femmine
+                tot = [c for c in cols_var if "total" in norm(c)]
+                mf = [c for c in cols_var if any(k in norm(c) for k in ("masch", "femm"))]
+                usa = tot[:1] or (mf if len(mf) == 2 else cols_var[:1])
+                df = df.assign(_C=codice6(df[c_cod]), _V=sum(a_numero(df[c]) for c in usa))
+                df = df[df["_C"].str.fullmatch(r"\d{6}")]
+                serie = df.groupby("_C")["_V"].sum()
+                out[Y] = {k: int(v) for k, v in serie.items() if v}
+                if Y == anni[0]:
+                    log(f"P2 {Y} colonne: {list(df.columns)[:14]}")
+            log(f"P2 {Y}: {len(out.get(Y, {}))} comuni con variazioni territoriali")
+        except Exception as e:
+            log(f"P2 {Y}: lettura fallita ({e})")
+    return out
+
+
+def stima_cessioni(serie, tipo, anni, vigenti, eventi, variazioni, raccordi, extra_note) -> None:
+    """Cessioni di territorio tra comuni che esistono prima e dopo (dati P2 dal 2019).
+
+    Per una cessione avvenuta nell'anno Y dal comune d (variazione -T) ai comuni r (variazione +):
+        quota_d = T / pop_d(1/1/Y)    (pop_d ai confini di allora, cioè prima della cessione)
+    e per ogni anno t <= Y si sposta pop_d(t) * quota_d da d ai comuni r, in proporzione a quanto ha
+    ricevuto ciascuno. Le quote si calcolano tutte sulla serie originale, poi si applicano."""
+    grezza = {c: dict(v) for c, v in serie.items()}
+    spostamenti = []  # (Y, d, {r: peso}, quota)
+    for Y, var in sorted(variazioni.items()):
+        def attuale(cod):
+            m = raccordi.get(Y, {})
+            dest = m.get(cod, {cod})
+            return next(iter(dest)) if len(dest) == 1 else None
+        var_att = defaultdict(int)
+        for cod, v in var.items():
+            a = attuale(cod)
+            if a == cod and a in vigenti:  # solo comuni che non hanno cambiato codice (no fusioni)
+                var_att[a] += v
+        for d, v in var_att.items():
+            if v >= 0 or Y not in grezza.get(d, {}) or (Y + 1) not in grezza.get(d, {}):
+                continue
+            partner = {o for (yr, a, b, _) in eventi if Y - 1 <= yr <= Y + 1 and d in (a, b) for o in (a, b) if o != d}
+            riceventi = {r: var_att.get(r, 0) for r in partner
+                         if r in vigenti and var_att.get(r, 0) > 0 and min(anni) in grezza.get(r, {})}
+            if not riceventi:
+                riceventi = {r: 1 for r in partner if r in vigenti and min(anni) in grezza.get(r, {})}
+            if not riceventi:
+                log(f"  cessione {Y} da {d} ({v:+}): comune ricevente non trovato")
+                continue
+            tot = sum(riceventi.values())
+            quota = min(0.95, -v / grezza[d][Y]) if grezza[d][Y] else 0
+            spostamenti.append((Y, d, {r: w / tot for r, w in riceventi.items()}, quota))
+    for Y, d, riceventi, quota in spostamenti:
+        for t in anni:
+            if t > Y or t not in grezza[d]:
+                continue
+            parte = grezza[d][t] * quota
+            for r, w in riceventi.items():
+                q = int(round(parte * w))
+                if t not in serie[r]:
+                    continue
+                serie[d][t] -= q
+                serie[r][t] += q
+                tipo[d][t] = tipo[r][t] = "P"
+        anni_m = [t for t in anni if t <= Y]
+        dest = ", ".join(sorted(riceventi))
+        log(f"  cessione {Y}: {d} -> {dest}, quota {quota:.3%}, anni {anni_m[0]}-{anni_m[-1]} riportati ai confini attuali")
+        extra_note[d].append(f"{anni_m[0]}-{anni_m[-1]}: stima ai confini attuali, tolta la quota ceduta nel {Y} a {dest} ({quota:.3%}, fonte bilancio demografico)")
+        for r in riceventi:
+            extra_note[r].append(f"{anni_m[0]}-{anni_m[-1]}: stima ai confini attuali, aggiunta la quota ricevuta nel {Y} da {d} (fonte bilancio demografico)")
+
+
 def stima_comuni_nuovi(serie, tipo, anni, vigenti, eventi, extra_note) -> None:
     """Comuni nati da parti di altri comuni (es. Misiliscemi da Trapani nel 2021).
 
@@ -715,9 +806,17 @@ def ricostruisci():
             if a in serie[c]:
                 serie[c][a] = int(round(serie[c][a]))
 
-    # 3b. Comuni nati da parti di altri comuni
+    # 3b. Variazioni di territorio senza cambio di codice
     note, eventi = variazioni_note(vigenti)
     extra_note: dict[str, list[str]] = defaultdict(list)
+    # prima le cessioni tra comuni esistenti (i comuni nuovi non hanno ancora dati e vengono esclusi),
+    # poi i comuni nuovi da scorporo
+    log("Cessioni di territorio tra comuni esistenti (bilancio demografico P2):")
+    try:
+        variazioni = carica_variazioni_territoriali([a for a in anni if a >= ANNO_CENSIMENTO and a < max(anni)])
+        stima_cessioni(serie, tipo, anni, vigenti, eventi, variazioni, raccordi, extra_note)
+    except Exception as e:  # facoltativo: senza P2 la serie resta valida
+        log(f"  saltato: {e}")
     log("Comuni nuovi da scorporo:")
     stima_comuni_nuovi(serie, tipo, anni, vigenti, eventi, extra_note)
 
