@@ -1,111 +1,193 @@
 <!DOCTYPE html>
 <html lang="it">
 <head>
-  <meta charset="UTF-8">
-  <meta name="viewport" content="width=device-width, initial-scale=1.0">
-  <title>Popolazione Comuni Italiani 2002–2026 (Confini Attuali)</title>
-  <script src="https://jsdelivr.net"></script>
-  <style>
-    body { font-family: system-ui, -apple-system, sans-serif; max-width: 1100px; margin: 2rem auto; padding: 0 1rem; color: #1e293b; }
-    .controls { display: flex; gap: 1rem; flex-wrap: wrap; margin-bottom: 1.5rem; align-items: center; }
-    input { flex: 1; min-width: 260px; padding: 0.7rem 1rem; font-size: 1rem; border: 1px solid #cbd5e1; border-radius: 8px; }
-    button { padding: 0.7rem 1.2rem; background: #0f172a; color: #fff; border: none; border-radius: 8px; cursor: pointer; font-weight: 500; }
-    button:hover { background: #334155; }
-    .legend { font-size: 0.875rem; color: #475569; margin-bottom: 1rem; background: #f8fafc; padding: 0.75rem 1rem; border-radius: 8px; border-left: 4px solid #3b82f6; }
-    .stimato-prop { font-style: italic; color: #b45309; background: #fef3c7; padding: 2px 5px; border-radius: 4px; }
-    .stimato-somma { color: #0369a1; }
-    table { width: 100%; border-collapse: collapse; margin-top: 1.5rem; font-size: 0.9rem; overflow-x: auto; display: block; }
-    th, td { border-bottom: 1px solid #e2e8f0; padding: 0.5rem 0.6rem; text-align: right; white-space: nowrap; }
-    th:first-child, td:first-child { text-align: left; position: sticky; left: 0; background: #fff; font-weight: 600; }
-  </style>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Popolazione dei comuni italiani 2002–2026 ai confini attuali</title>
+<style>
+  :root { --ink:#1e293b; --muted:#64748b; --line:#e2e8f0; --bg:#f8fafc; --accent:#2563eb; --sum:#0369a1; --est:#b45309; }
+  * { box-sizing: border-box; }
+  body { font-family: system-ui, -apple-system, "Segoe UI", sans-serif; max-width: 1100px; margin: 2rem auto; padding: 0 1rem; color: var(--ink); line-height: 1.45; }
+  h1 { font-size: 1.6rem; margin: 0 0 .25rem; }
+  .sub { color: var(--muted); margin: 0 0 1.5rem; font-size: .95rem; }
+  .bar { display: flex; gap: .75rem; flex-wrap: wrap; align-items: flex-start; }
+  .search { position: relative; flex: 1; min-width: 260px; }
+  .search input { width: 100%; padding: .7rem 1rem; font-size: 1rem; border: 1px solid #cbd5e1; border-radius: 8px; }
+  .search input:focus { outline: 2px solid var(--accent); outline-offset: 1px; }
+  ul.sugg { position: absolute; z-index: 5; left: 0; right: 0; margin: 4px 0 0; padding: 4px; list-style: none; background: #fff; border: 1px solid var(--line); border-radius: 8px; box-shadow: 0 8px 24px rgba(15,23,42,.12); max-height: 360px; overflow-y: auto; }
+  ul.sugg:empty { display: none; }
+  ul.sugg li { padding: .45rem .6rem; border-radius: 6px; cursor: pointer; display: flex; justify-content: space-between; gap: 1rem; }
+  ul.sugg li small { color: var(--muted); }
+  ul.sugg li.on, ul.sugg li:hover { background: #eff6ff; }
+  button, a.btn { padding: .7rem 1.1rem; background: #0f172a; color: #fff; border: 0; border-radius: 8px; cursor: pointer; font: inherit; font-weight: 500; text-decoration: none; display: inline-block; }
+  button.light, a.light { background: #fff; color: var(--ink); border: 1px solid #cbd5e1; }
+  .status { color: var(--muted); font-size: .9rem; margin-top: .6rem; }
+  .status.err { color: #b91c1c; }
+  .legend { font-size: .85rem; color: #475569; background: var(--bg); padding: .7rem 1rem; border-radius: 8px; border-left: 4px solid var(--accent); margin: 1.25rem 0; }
+  .s { color: var(--sum); font-weight: 600; } .p { color: var(--est); font-style: italic; }
+  #card { display: none; margin-top: 1rem; }
+  #card h2 { margin: 0 0 .25rem; font-size: 1.35rem; }
+  #note { color: #475569; font-size: .9rem; margin: .25rem 0 1rem; }
+  .kpis { display: flex; gap: 1.5rem; flex-wrap: wrap; margin: .5rem 0 1rem; }
+  .kpi b { display: block; font-size: 1.25rem; } .kpi span { color: var(--muted); font-size: .8rem; }
+  svg { width: 100%; height: auto; display: block; }
+  .tbl { overflow-x: auto; margin-top: 1rem; border: 1px solid var(--line); border-radius: 8px; }
+  table { border-collapse: collapse; font-size: .85rem; font-variant-numeric: tabular-nums; }
+  th, td { padding: .4rem .6rem; text-align: right; white-space: nowrap; border-bottom: 1px solid var(--line); }
+  th:first-child, td:first-child { position: sticky; left: 0; background: #fff; text-align: left; }
+  thead th { background: var(--bg); }
+  footer { margin-top: 2.5rem; font-size: .8rem; color: var(--muted); }
+  .actions { display: flex; gap: .5rem; margin-top: 1rem; flex-wrap: wrap; }
+</style>
 </head>
 <body>
+<h1>Popolazione dei comuni italiani ai confini attuali</h1>
+<p class="sub" id="sub">Serie 1° gennaio 2002–2026, ricostruita sui comuni vigenti oggi. Fonti: Istat (demo.istat.it, SITUAS).</p>
 
-  <h1>Popolazione Comuni 2002–2026 ai confini vigenti</h1>
-  
-  <div class="legend">
-    <strong>Legenda dati:</strong>
-    Valori normali = Dato ufficiale Istat |
-    <span class="stimato-somma">Valori blu</span> = Somma da fusione |
-    <span class="stimato-prop">Valori in corsivo</span> = Stima proporzionale arrotondata all'unità (scorpori/variazioni territoriali)
+<div class="bar">
+  <div class="search">
+    <input id="q" type="search" placeholder="Cerca un comune per nome o codice Istat (es. Uggiate con Ronago, 058091)" autocomplete="off" disabled>
+    <ul class="sugg" id="sugg" role="listbox"></ul>
   </div>
+  <a class="btn" href="data/popolazione_2026.csv" download>Scarica CSV completo</a>
+</div>
+<div class="status" id="status">Caricamento dati…</div>
 
-  <div class="controls">
-    <input type="text" id="search" list="lista-comuni" placeholder="Cerca un comune (es. Uggiate con Ronago, Milano...)">
-    <datalist id="lista-comuni"></datalist>
-    <button onclick="scaricaCSVCompleto()">Scarica intero CSV 2002–2026</button>
+<div class="legend">
+  Valori normali = dato Istat del comune ·
+  <span class="s">blu</span> = somma di più comuni confluiti per fusione/incorporazione ·
+  <span class="p">corsivo arancio</span> = quota stimata (comune di allora diviso tra più comuni attuali).
+  2002–2018: ricostruzione intercensuaria Istat; dal 2019: popolazione da censimento permanente (POSAS).
+</div>
+
+<section id="card">
+  <h2 id="titolo"></h2>
+  <div id="note"></div>
+  <div class="kpis" id="kpis"></div>
+  <div id="chart"></div>
+  <div class="tbl"><table id="tab"></table></div>
+  <div class="actions">
+    <button class="light" id="dl1">Scarica CSV di questo comune</button>
+    <button class="light" id="link">Copia link</button>
   </div>
+</section>
 
-  <div id="scheda-comune" style="display:none;">
-    <h2 id="nome-comune"></h2>
-    <p id="note-comune" style="color:#475569;"></p>
-    <canvas id="grafico" height="95"></canvas>
-    <table id="tabella-anni"></table>
-  </div>
+<footer id="footer"></footer>
 
-  <script>
-    let dataset = [];
-    let chartInstance = null;
-    const ANNI = Array.from({length: 25}, (_, i) => String(2002 + i));
+<script>
+(() => {
+  const $ = id => document.getElementById(id);
+  const fmt = n => n == null ? '–' : n.toLocaleString('it-IT');
+  const norm = s => s.normalize('NFD').replace(/[̀-ͯ]/g, '').toLowerCase();
+  let META, COMUNI = [], INDEX = [], BYCODE = new Map(), current = null, active = -1;
 
-    // Caricamento istantaneo del JSON pre-calcolato da GitHub Actions
-    fetch('data/popolazione_2026.json')
-      .then(res => res.json())
-      .then(data => {
-        dataset = data;
-        const datalist = document.getElementById('lista-comuni');
-        data.forEach(c => {
-          const opt = document.createElement('option');
-          opt.value = `${c.denominazione} (${c.sigla_prov}) [${c.codice_istat}]`;
-          datalist.appendChild(opt);
-        });
-      });
+  fetch('data/popolazione_2026.json', { cache: 'no-cache' })
+    .then(r => { if (!r.ok) throw new Error('HTTP ' + r.status); return r.json(); })
+    .then(d => {
+      if (!d.meta || !Array.isArray(d.comuni)) throw new Error('formato dati non aggiornato: avvia l’Action "Aggiorna Serie Storica"');
+      META = d.meta;
+      COMUNI = d.comuni.map(([c, n, p, v, t, m]) => ({ c, n, p, v, t: t || 'R'.repeat(v.length), m }));
+      COMUNI.forEach(x => BYCODE.set(x.c, x));
+      INDEX = COMUNI.map(x => norm(x.n) + ' ' + x.c);
+      const a = META.anni;
+      $('sub').textContent = `Serie 1° gennaio ${a[0]}–${a[a.length - 1]}, ricostruita sui ${COMUNI.length.toLocaleString('it-IT')} comuni vigenti al ${META.confini_al}. Fonti: Istat (demo.istat.it, SITUAS).`;
+      $('footer').innerHTML = 'Aggiornato il ' + META.aggiornato + '. Fonti: ' + Object.entries(META.fonti).map(([k, v]) => `<b>${k}</b>: ${v}`).join(' · ');
+      $('status').textContent = '';
+      $('q').disabled = false; $('q').focus();
+      const h = location.hash.slice(1);
+      if (BYCODE.has(h)) show(BYCODE.get(h));
+    })
+    .catch(e => { $('status').textContent = 'Impossibile caricare i dati: ' + e.message; $('status').className = 'status err'; });
 
-    document.getElementById('search').addEventListener('change', (e) => {
-      const match = e.target.value.match(/\[(\d+)\]$/);
-      if (!match) return;
-      const comune = dataset.find(c => c.codice_istat === match[1]);
-      if (comune) mostraComune(comune);
-    });
-
-    function mostraComune(c) {
-      document.getElementById('scheda-comune').style.display = 'block';
-      document.getElementById('nome-comune').textContent = `${c.denominazione} (${c.sigla_prov}) – Codice Istat ${c.codice_istat}`;
-      document.getElementById('note-comune').textContent = c.note || 'Nessuna variazione territoriale post-2019.';
-
-      // Costruzione tabella con CORSIVO sui valori stimati per proporzione ("P")
-      let thead = '<thead><tr><th>Anno</th>' + ANNI.map(a => `<th>${a}</th>`).join('') + '</tr></thead>';
-      let tbody = '<tbody><tr><td>Popolazione</td>' + ANNI.map(a => {
-        const val = c.serie[a].v.toLocaleString('it-IT');
-        const tipo = c.serie[a].t; // "R" = Reale, "S" = Somma, "P" = Proporzione
-        if (tipo === 'P') return `<td><span class="stimato-prop" title="Stimato per proporzione">${val}</span></td>`;
-        if (tipo === 'S') return `<td><span class="stimato-somma" title="Ricostruito per somma (fusione)">${val}</span></td>`;
-        return `<td>${val}</td>`;
-      }).join('') + '</tr></tbody>';
-      document.getElementById('tabella-anni').innerHTML = thead + tbody;
-
-      // Grafico Chart.js (punti tratteggiati/evidenziati dove il dato è stimato)
-      const ctx = document.getElementById('grafico').getContext('2d');
-      if (chartInstance) chartInstance.destroy();
-      chartInstance = new Chart(ctx, {
-        type: 'line',
-        data: {
-          labels: ANNI,
-          datasets: [{
-            label: 'Popolazione residente',
-            data: ANNI.map(a => c.serie[a].v),
-            borderColor: '#0f172a',
-            pointBackgroundColor: ANNI.map(a => c.serie[a].t === 'P' ? '#d97706' : '#0f172a'),
-            pointRadius: ANNI.map(a => c.serie[a].t === 'P' ? 5 : 3),
-            tension: 0.15
-          }]
-        }
-      });
+  // --- ricerca (al massimo 20 suggerimenti, nessuna datalist enorme) ---
+  function search(q) {
+    q = norm(q.trim());
+    if (q.length < 2) return [];
+    const starts = [], contains = [];
+    for (let i = 0; i < INDEX.length && starts.length < 20; i++) {
+      const k = INDEX[i].indexOf(q);
+      if (k === 0 || INDEX[i].startsWith(q, INDEX[i].length - 6)) starts.push(COMUNI[i]);
+      else if (k > 0 && contains.length < 20) contains.push(COMUNI[i]);
     }
+    return starts.concat(contains).slice(0, 20);
+  }
+  function renderSugg(list) {
+    active = -1;
+    $('sugg').innerHTML = list.map((x, i) => `<li role="option" data-c="${x.c}"><span>${x.n} (${x.p})</span><small>${x.c}</small></li>`).join('');
+  }
+  $('q').addEventListener('input', e => renderSugg(search(e.target.value)));
+  $('q').addEventListener('keydown', e => {
+    const items = [...$('sugg').children];
+    if (!items.length) return;
+    if (e.key === 'ArrowDown' || e.key === 'ArrowUp') {
+      e.preventDefault();
+      active = (active + (e.key === 'ArrowDown' ? 1 : -1) + items.length) % items.length;
+      items.forEach((li, i) => li.classList.toggle('on', i === active));
+      items[active].scrollIntoView({ block: 'nearest' });
+    } else if (e.key === 'Enter') {
+      const li = items[Math.max(active, 0)]; show(BYCODE.get(li.dataset.c));
+    } else if (e.key === 'Escape') renderSugg([]);
+  });
+  $('sugg').addEventListener('mousedown', e => { const li = e.target.closest('li'); if (li) show(BYCODE.get(li.dataset.c)); });
+  $('q').addEventListener('blur', () => setTimeout(() => renderSugg([]), 150));
 
-    function scaricaCSVCompleto() {
-      window.location.href = 'data/popolazione_2026.csv';
+  // --- scheda comune ---
+  function show(x) {
+    current = x; renderSugg([]);
+    $('q').value = `${x.n} (${x.p})`;
+    history.replaceState(null, '', '#' + x.c);
+    const anni = META.anni, v = x.v;
+    $('card').style.display = 'block';
+    $('titolo').textContent = `${x.n} (${x.p}) · codice Istat ${x.c}`;
+    $('note').textContent = x.m || 'Nessuna variazione territoriale dal 2002.';
+    const first = v.findIndex(n => n != null), last = v.length - 1;
+    const d = v[last] - v[first], pct = v[first] ? (d / v[first] * 100) : 0;
+    $('kpis').innerHTML =
+      `<div class="kpi"><b>${fmt(v[last])}</b><span>residenti al 1/1/${anni[last]}</span></div>` +
+      `<div class="kpi"><b>${d >= 0 ? '+' : ''}${fmt(d)}</b><span>variazione dal ${anni[first]}</span></div>` +
+      `<div class="kpi"><b>${pct >= 0 ? '+' : ''}${pct.toLocaleString('it-IT', { maximumFractionDigits: 1 })}%</b><span>variazione %</span></div>`;
+    const cls = t => t === 'S' ? ' class="s" title="Somma comuni fusi"' : t === 'P' ? ' class="p" title="Quota stimata"' : '';
+    $('tab').innerHTML = '<thead><tr><th>Anno</th>' + anni.map(a => `<th>${a}</th>`).join('') + '</tr></thead>' +
+      '<tbody><tr><td>Popolazione</td>' + v.map((n, i) => `<td${cls(x.t[i])}>${fmt(n)}</td>`).join('') + '</tr></tbody>';
+    $('chart').innerHTML = chart(anni, v, x.t);
+  }
+
+  // grafico SVG leggero (niente librerie esterne)
+  function chart(anni, v, t) {
+    const W = 1000, H = 300, L = 70, R = 15, T = 15, B = 30;
+    const vals = v.filter(n => n != null);
+    let lo = Math.min(...vals), hi = Math.max(...vals);
+    const pad = (hi - lo) * 0.1 || hi * 0.05 || 1; lo = Math.max(0, lo - pad); hi += pad;
+    const x = i => L + i * (W - L - R) / (anni.length - 1), y = n => T + (hi - n) * (H - T - B) / (hi - lo);
+    let g = '';
+    for (let k = 0; k <= 4; k++) {
+      const val = lo + (hi - lo) * k / 4, yy = y(val);
+      g += `<line x1="${L}" x2="${W - R}" y1="${yy}" y2="${yy}" stroke="#e2e8f0"/><text x="${L - 8}" y="${yy + 4}" text-anchor="end" font-size="12" fill="#64748b">${Math.round(val).toLocaleString('it-IT')}</text>`;
     }
-  </script>
+    anni.forEach((a, i) => { if (i % 2 === 0) g += `<text x="${x(i)}" y="${H - 8}" text-anchor="middle" font-size="12" fill="#64748b">${a}</text>`; });
+    const sep = anni.indexOf(2019);
+    if (sep > 0) g += `<line x1="${x(sep)}" x2="${x(sep)}" y1="${T}" y2="${H - B}" stroke="#94a3b8" stroke-dasharray="4 4"/><text x="${x(sep) + 5}" y="${T + 12}" font-size="11" fill="#64748b">censimento permanente</text>`;
+    const pts = v.map((n, i) => n == null ? null : `${x(i)},${y(n)}`).filter(Boolean).join(' ');
+    g += `<polyline points="${pts}" fill="none" stroke="#0f172a" stroke-width="2"/>`;
+    v.forEach((n, i) => { if (n == null) return;
+      const c = t[i] === 'S' ? '#0369a1' : t[i] === 'P' ? '#d97706' : '#0f172a';
+      g += `<circle cx="${x(i)}" cy="${y(n)}" r="${t[i] === 'R' ? 3 : 5}" fill="${c}"><title>${anni[i]}: ${fmt(n)}</title></circle>`; });
+    return `<svg viewBox="0 0 ${W} ${H}" role="img" aria-label="Andamento della popolazione">${g}</svg>`;
+  }
+
+  window.addEventListener('hashchange', () => { const h = location.hash.slice(1); if (BYCODE.has(h) && (!current || current.c !== h)) show(BYCODE.get(h)); });
+
+  $('dl1').addEventListener('click', () => {
+    if (!current) return;
+    const tipo = { R: 'dato Istat', S: 'somma fusione', P: 'stima proporzionale', '-': 'mancante' };
+    const rows = ['codice_istat;comune;anno;popolazione;tipo']
+      .concat(META.anni.map((a, i) => `${current.c};${current.n};${a};${current.v[i] ?? ''};${tipo[current.t[i]]}`));
+    const url = URL.createObjectURL(new Blob(['﻿' + rows.join('\n')], { type: 'text/csv' }));
+    Object.assign(document.createElement('a'), { href: url, download: `popolazione_${current.c}.csv` }).click();
+    URL.revokeObjectURL(url);
+  });
+  $('link').addEventListener('click', () => navigator.clipboard?.writeText(location.href).then(() => { $('link').textContent = 'Link copiato'; setTimeout(() => $('link').textContent = 'Copia link', 1500); }));
+})();
+</script>
 </body>
 </html>
