@@ -284,54 +284,99 @@ def _num(x: str) -> int | None:
     return int(x) if re.fullmatch(r"-?\d+", x) else None
 
 
-def leggi_ric_singola_area(testo: str, nome: str) -> dict[str, dict[int, int]]:
-    """Un file per comune. Titolo con 'Comune: 001001', poi 'Età/Anno;2002;...;2019',
-    poi una riga per età (0..100) e di norma una riga 'Totale'."""
+def _cittadinanza(riga: str) -> str | None:
+    n = norm(riga)
+    if "tutte le cittadinanze" in n or "totale cittadinanze" in n:
+        return "tutte"
+    if "stranier" in n or "italian" in n or "cittadinanza" in n:
+        return "altro"
+    return None
+
+
+def _sesso(etichetta: str) -> str | None:
+    n = norm(etichetta)
+    if n.startswith("total") or ("masch" in n and "femm" in n):
+        return "totale"
+    if n.startswith("masch") or n.startswith("femm"):
+        return "altro"
+    return None
+
+
+def leggi_ric_singola_area(testo: str, nome: str, blocchi: list | None = None) -> dict[str, dict[int, int]]:
+    """Un file per comune, fatto di più blocchi (tutte le cittadinanze / stranieri, totale / maschi / femmine).
+    Ogni blocco: titolo, 'Età/Anno;2002;...;2019', 'Età;<sesso>', una riga per età, di norma 'Totale'.
+    Si tiene solo il blocco 'Tutte le cittadinanze' + 'Totale'."""
     m = re.search(r"Comune:\s*(\d{6})", testo) or re.search(r"(?<!\d)(\d{6})(?!\d)", nome)
     if not m:
         raise ValueError(f"codice comune non trovato in {nome}")
     cod = m.group(1)
-    anni, somma, totale = None, None, None
+    citt, sesso, anni = "tutte", None, None
+    somma, totale, trovato = None, None, None
+    citt_blocco, sesso_blocco = "tutte", None
     for riga in testo.splitlines():
         if not riga.strip():
             continue
+        c = _cittadinanza(riga)
+        if c and not re.match(r"\s*\d", riga):
+            citt = c
         f = _campi(riga)
-        if anni is None:
-            if norm(f[0]).startswith("eta/anno") or norm(f[0]).startswith("eta / anno"):
-                anni = [_num(x) for x in f[1:]]
-                somma = [0] * len(anni)
+        e0 = norm(f[0])
+        if e0.startswith("eta/anno") or e0.startswith("eta / anno"):
+            if somma is not None and trovato is None and citt_blocco == "tutte" and sesso_blocco in (None, "totale"):
+                trovato = totale if totale and any(totale) else somma
+            anni = [_num(x) for x in f[1:]]
+            somma, totale, sesso = [0] * len(anni), None, None
+            citt_blocco, sesso_blocco = citt, None
             continue
-        etichetta = norm(f[0])
+        if anni is None:
+            continue
+        if e0 in ("eta", "età") and len(f) > 1:
+            sesso_blocco = _sesso(f[1]) or sesso_blocco
+            if blocchi is not None:
+                blocchi.append(f"{citt_blocco}/{f[1]}")
+            continue
         valori = [_num(x) for x in f[1:1 + len(anni)]]
-        if etichetta.startswith("total"):
+        if e0.startswith("total"):
             totale = valori
-        elif _num(f[0].split()[0] if f[0] else "") is not None:  # 0, 1, ..., "100 e oltre"
-            somma = [a + (b or 0) for a, b in zip(somma, valori + [0] * (len(anni) - len(valori)))]
+        elif f[0] and _num(f[0].split()[0]) is not None:  # 0, 1, ..., "100 e oltre"
+            somma = [x + (y or 0) for x, y in zip(somma, valori + [0] * (len(anni) - len(valori)))]
+    if somma is not None and trovato is None and citt_blocco == "tutte" and sesso_blocco in (None, "totale"):
+        trovato = totale if totale and any(totale) else somma
     if anni is None:
         raise ValueError(f"riga 'Età/Anno' non trovata in {nome}")
-    serie = totale if totale and any(totale) else somma
-    return {cod: {a: v for a, v in zip(anni, serie) if a and v is not None}}
+    if trovato is None:
+        raise ValueError(f"blocco 'Tutte le cittadinanze / Totale' non trovato in {nome}")
+    return {cod: {x: v for x, v in zip(anni, trovato) if x and v is not None}}
 
 
-def leggi_ric_territorio(testo: str, nome: str) -> dict[str, dict[int, int]]:
-    """Un file per provincia: blocchi con 'Anno: AAAA', intestazione 'Territorio/Età;;0;1;...',
-    poi una riga per comune: codice;nome;valori per età[;totale]."""
+def leggi_ric_territorio(testo: str, nome: str, blocchi: list | None = None) -> dict[str, dict[int, int]]:
+    """Un file per provincia, a blocchi: '<cittadinanza> - Anno: AAAA - Provincia: ...',
+    'Territorio/Età;;0;1;...', 'Codice comune;Comune;<sesso>', poi una riga per comune.
+    Si tengono solo i blocchi 'Tutte le cittadinanze' + 'Totale'."""
     out: dict[str, dict[int, int]] = defaultdict(dict)
-    anno, ha_totale = None, False
+    anno, citt, sesso, ha_totale = None, "tutte", None, False
     for riga in testo.splitlines():
+        if not riga.strip():
+            continue
         m = re.search(r"Anno:\s*(\d{4})", riga)
         if m:
             anno = int(m.group(1))
-            continue
-        if not riga.strip():
+            citt = _cittadinanza(riga) or "tutte"
+            sesso = None
             continue
         f = _campi(riga)
-        if norm(f[0]).startswith("territorio/eta"):
-            ha_totale = norm(f[-1]).startswith("total") or norm(f[-2] if len(f) > 1 else "").startswith("total")
+        e0 = norm(f[0])
+        if e0.startswith("territorio/eta"):
+            ha_totale = norm(f[-1]).startswith("total")
+            sesso = None
             continue
-        if anno and re.fullmatch(r"\d{6}", f[0]):
-            valori = [_num(x) for x in f[2:]]
-            valori = [v for v in valori if v is not None]
+        if e0.startswith("codice comune") and len(f) > 2:
+            sesso = _sesso(f[2])
+            if blocchi is not None:
+                blocchi.append(f"{anno}/{citt}/{f[2]}")
+            continue
+        if anno and citt == "tutte" and sesso in (None, "totale") and re.fullmatch(r"\d{6}", f[0]):
+            valori = [v for v in (_num(x) for x in f[2:]) if v is not None]
             if valori:
                 out[f[0]][anno] = valori[-1] if ha_totale else sum(valori)
     return out
@@ -346,15 +391,19 @@ def leggi_ric_zip(raw: bytes, nome_zip: str) -> dict[str, dict[int, int]]:
         errori: list[str] = []
         for i, n in enumerate(nomi):
             testo = _decodifica(z.read(n))
+            blocchi = [] if i == 0 else None
             if i == 0:
                 log(f"  {n}:")
                 for r in testo.splitlines()[:9]:
                     log(f"    | {r[:160]}")
             try:
-                parte = leggi_ric_singola_area(testo, n) if singola else leggi_ric_territorio(testo, n)
+                parte = leggi_ric_singola_area(testo, n, blocchi) if singola else leggi_ric_territorio(testo, n, blocchi)
             except ValueError as e:
                 errori.append(str(e))
                 continue
+            if blocchi is not None:
+                log(f"  blocchi nel primo file: {blocchi[:12]}{' ...' if len(blocchi) > 12 else ''}")
+                log(f"  valori letti: {dict(list(parte.items())[:2])}")
             for cod, serie in parte.items():
                 pop[cod].update(serie)
     if errori:
@@ -395,6 +444,7 @@ def carica_ricostruzione(anni_validi: set[int]) -> tuple[dict, str]:
         for nome, df in csv_da_zip(raw):
             if anno == min(anni_validi):
                 log(f"  {nome}: colonne {list(df.columns)}")
+                log("  prime righe:\n" + df.head(12).to_string(max_cols=12, max_colwidth=25))
             # i file RCS hanno una riga per comune x cittadinanza: si somma tutto
             unisci(pop, popolazione_da_df(df, anno=anno), {anno})
     return pop, "Popolazione per cittadinanza RCS (dalla ricostruzione 2002-2018)"
