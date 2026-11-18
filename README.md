@@ -21,8 +21,11 @@ Per ogni anno il codice di ciascun comune viene portato al codice vigente oggi c
   (con più cedenti, ripartita in base al calo di ciascuno); negli anni precedenti la popolazione del cedente
   ai confini vecchi viene divisa con quella quota. Cedente e comune nuovo sono marcati come stima, i totali non cambiano.
 
-Le cessioni di territorio tra due comuni che esistevano già entrambi non vengono riproporzionate
-(manca il dato sulla popolazione trasferita); compaiono nelle note.
+* **P** anche per le **cessioni di territorio tra comuni che esistono già entrambi** (dal 2019): la popolazione
+  trasferita è la voce "Unità in più/meno dovute a variazioni territoriali" del bilancio demografico Istat (P2,
+  `demo.istat.it/data/p2/P2_AAAA_it_Comuni.zip`). Quota = abitanti ceduti / popolazione del cedente al 1° gennaio
+  dell'anno della cessione; negli anni precedenti quella quota passa dal cedente al ricevente.
+  Per il 2002-2018 non serve: la ricostruzione Istat è già alla classificazione 2019.
 
 Lo script si ferma con errore se i totali nazionali non sono plausibili o se il raccordo perde popolazione:
 in quel caso l'Action fallisce e i dati pubblicati non vengono toccati.
