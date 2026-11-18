@@ -203,14 +203,7 @@ def popolazione_da_df(df: pd.DataFrame, anno: int | None = None) -> dict[str, di
     desc = [c for c in df.columns if any(k in norm(c) for k in ("cittadinanza", "paese", "zona", "continente", "country", "citizenship"))
             and "codice" not in norm(c)]
     per_paese = bool(desc)
-    if desc:
-        marcatori = {"totale", "total", "mondo", "world", "totale generale", "tutte", "tutti i paesi", "totale mondo"}
-        tot = pd.Series(False, index=df.index)
-        for c in desc:
-            tot |= df[c].astype(str).map(norm).isin(marcatori)
-        if tot.any():
-            df = df[tot]
-            per_paese = False
+    # (nessun filtro: più sotto si prende il massimo per comune e anno = totale generale)
     df["_COD"] = codice6(df[c_cod])
     df = df[df["_COD"].str.fullmatch(r"\d{6}")]
     out: dict[str, dict[int, int]] = defaultdict(dict)
@@ -227,7 +220,7 @@ def popolazione_da_df(df: pd.DataFrame, anno: int | None = None) -> dict[str, di
             raise ValueError(f"colonna totale non trovata: {list(df.columns)}")
         df["_V"] = sum(a_numero(df[c]) for c in cols)
         df["_A"] = pd.to_numeric(df[c_anno], errors="coerce") if c_anno else anno
-        g = df.groupby(["_COD", "_A"])["_V"].max() if per_paese and len(desc) > 1 else df.groupby(["_COD", "_A"])["_V"].sum()
+        g = df.groupby(["_COD", "_A"])["_V"].max() if desc else df.groupby(["_COD", "_A"])["_V"].sum()
         for (cod, a), v in g.items():
             if pd.notna(a):
                 out[cod][int(a)] = int(round(v))
@@ -274,7 +267,101 @@ def trova_url_ricostruzione() -> list[str]:
     trovati = list(dict.fromkeys(trovati))
     # preferisci il file unico "Comuni", poi i file per provincia della ricostruzione
     comuni = [l for l in trovati if re.search(r"comun|municip", l, re.I) and not re.search(r"bilanc|rbd", l, re.I)]
-    return sorted(comuni, key=lambda l: 0 if "territorio" in l.lower() else 1)
+    return sorted(comuni, key=lambda l: 0 if "singolaarea" in l.lower() else 1)
+
+
+
+# --------------------------------------------------------------------------
+# Lettore dei file della ricostruzione (demo.istat.it/data/ricostruzione/)
+# Non sono CSV semplici: righe di titolo, doppia intestazione, età in riga.
+# --------------------------------------------------------------------------
+def _campi(riga: str) -> list[str]:
+    return [c.strip().strip('"').strip() for c in next(csv.reader([riga], delimiter=";"))]
+
+
+def _num(x: str) -> int | None:
+    x = x.replace(".", "").replace(" ", "")
+    return int(x) if re.fullmatch(r"-?\d+", x) else None
+
+
+def leggi_ric_singola_area(testo: str, nome: str) -> dict[str, dict[int, int]]:
+    """Un file per comune. Titolo con 'Comune: 001001', poi 'Età/Anno;2002;...;2019',
+    poi una riga per età (0..100) e di norma una riga 'Totale'."""
+    m = re.search(r"Comune:\s*(\d{6})", testo) or re.search(r"(?<!\d)(\d{6})(?!\d)", nome)
+    if not m:
+        raise ValueError(f"codice comune non trovato in {nome}")
+    cod = m.group(1)
+    anni, somma, totale = None, None, None
+    for riga in testo.splitlines():
+        if not riga.strip():
+            continue
+        f = _campi(riga)
+        if anni is None:
+            if norm(f[0]).startswith("eta/anno") or norm(f[0]).startswith("eta / anno"):
+                anni = [_num(x) for x in f[1:]]
+                somma = [0] * len(anni)
+            continue
+        etichetta = norm(f[0])
+        valori = [_num(x) for x in f[1:1 + len(anni)]]
+        if etichetta.startswith("total"):
+            totale = valori
+        elif _num(f[0].split()[0] if f[0] else "") is not None:  # 0, 1, ..., "100 e oltre"
+            somma = [a + (b or 0) for a, b in zip(somma, valori + [0] * (len(anni) - len(valori)))]
+    if anni is None:
+        raise ValueError(f"riga 'Età/Anno' non trovata in {nome}")
+    serie = totale if totale and any(totale) else somma
+    return {cod: {a: v for a, v in zip(anni, serie) if a and v is not None}}
+
+
+def leggi_ric_territorio(testo: str, nome: str) -> dict[str, dict[int, int]]:
+    """Un file per provincia: blocchi con 'Anno: AAAA', intestazione 'Territorio/Età;;0;1;...',
+    poi una riga per comune: codice;nome;valori per età[;totale]."""
+    out: dict[str, dict[int, int]] = defaultdict(dict)
+    anno, ha_totale = None, False
+    for riga in testo.splitlines():
+        m = re.search(r"Anno:\s*(\d{4})", riga)
+        if m:
+            anno = int(m.group(1))
+            continue
+        if not riga.strip():
+            continue
+        f = _campi(riga)
+        if norm(f[0]).startswith("territorio/eta"):
+            ha_totale = norm(f[-1]).startswith("total") or norm(f[-2] if len(f) > 1 else "").startswith("total")
+            continue
+        if anno and re.fullmatch(r"\d{6}", f[0]):
+            valori = [_num(x) for x in f[2:]]
+            valori = [v for v in valori if v is not None]
+            if valori:
+                out[f[0]][anno] = valori[-1] if ha_totale else sum(valori)
+    return out
+
+
+def leggi_ric_zip(raw: bytes, nome_zip: str) -> dict[str, dict[int, int]]:
+    pop: dict[str, dict[int, int]] = defaultdict(dict)
+    singola = "singolaarea" in nome_zip.lower().replace("-", "").replace("_", "")
+    with zipfile.ZipFile(io.BytesIO(raw)) as z:
+        nomi = [n for n in sorted(z.namelist()) if n.lower().endswith((".csv", ".txt"))]
+        log(f"  {len(nomi)} file CSV nello zip")
+        errori: list[str] = []
+        for i, n in enumerate(nomi):
+            testo = _decodifica(z.read(n))
+            if i == 0:
+                log(f"  {n}:")
+                for r in testo.splitlines()[:9]:
+                    log(f"    | {r[:160]}")
+            try:
+                parte = leggi_ric_singola_area(testo, n) if singola else leggi_ric_territorio(testo, n)
+            except ValueError as e:
+                errori.append(str(e))
+                continue
+            for cod, serie in parte.items():
+                pop[cod].update(serie)
+    if errori:
+        log(f"  {len(errori)} file non letti, es.: {errori[:3]}")
+        if len(errori) > 0.01 * max(len(nomi), 1):
+            raise ValueError(f"troppi file non leggibili ({len(errori)} su {len(nomi)})")
+    return pop
 
 
 def carica_ricostruzione(anni_validi: set[int]) -> tuple[dict, str]:
@@ -286,14 +373,7 @@ def carica_ricostruzione(anni_validi: set[int]) -> tuple[dict, str]:
         if not raw:
             continue
         try:
-            files = csv_da_zip(raw)
-            log(f"  {len(files)} file CSV nello zip")
-            for i, (nome, df) in enumerate(files):
-                if i == 0:
-                    log(f"  {nome}: colonne {list(df.columns)[:12]}{' ...' if len(df.columns) > 12 else ''}")
-                    for r in df.attrs.get("anteprima", []):
-                        log(f"    | {r[:200]}")
-                unisci(pop, popolazione_da_df(df), anni_validi)
+            pop = leggi_ric_zip(raw, url.rsplit("/", 1)[-1])
         except Exception as e:  # formato inatteso: prova il link successivo
             log(f"  lettura fallita: {e}")
             pop = defaultdict(dict)
