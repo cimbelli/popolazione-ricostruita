@@ -538,14 +538,15 @@ def raccordo(anno: int, data_fine: str) -> dict[str, set[str]]:
     return m
 
 
-def variazioni_note(vigenti: set[str]) -> dict[str, list[str]]:
-    """Note leggibili sulle variazioni dal 2002 (report 129). Facoltativo."""
+def variazioni_note(vigenti: set[str]) -> tuple[dict[str, list[str]], list[tuple[int, str, str, str]]]:
+    """Note leggibili sulle variazioni dal 2002 (report 129) e coppie (anno, comune, comune collegato, tipo)."""
     note: dict[str, list[str]] = defaultdict(list)
+    eventi: list[tuple[int, str, str, str]] = []
     try:
         df = situas(129)
     except Exception as e:
         log(f"SITUAS 129 non disponibile, niente note: {e}")
-        return note
+        return note, eventi
     log(f"SITUAS 129 colonne: {list(df.columns)}")
     c_anno = col(df, "anno")
     c_data = col(df, "data_decorrenza", "data decorrenza", "decorrenza", "data")
@@ -556,7 +557,7 @@ def variazioni_note(vigenti: set[str]) -> dict[str, list[str]]:
     c_nom_rel = col(df, "comune_rel", "denominazione_rel", "comune rel")
     if not (c_cod and (c_anno or c_data)):
         log("SITUAS 129: colonne non riconosciute, niente note")
-        return note
+        return note, eventi
     for _, r in df.iterrows():
         anno = None
         if c_anno:
@@ -575,7 +576,52 @@ def variazioni_note(vigenti: set[str]) -> dict[str, list[str]]:
             note[a].append(f"{int(anno)}: {desc}" + (f" (con {nb})" if b else ""))
         if b in vigenti and b != a:
             note[b].append(f"{int(anno)}: {desc} (con {na})")
-    return note
+        if b and b != a:
+            eventi.append((int(anno), a, b, desc))
+    return note, eventi
+
+
+def stima_comuni_nuovi(serie, tipo, anni, vigenti, eventi, extra_note) -> None:
+    """Comuni nati da parti di altri comuni (es. Misiliscemi da Trapani nel 2021).
+
+    Prima della nascita il comune nuovo non ha dati e il comune che ha ceduto il territorio
+    è ai confini vecchi. Si stima la quota ceduta nel primo anno in cui il comune nuovo esiste:
+        quota_d = T_d / (pop_d(Y) + T_d),  T_d = pop_nuovo(Y) * peso_d
+    dove peso_d è proporzionale al calo di popolazione del cedente d tra Y-1 e Y (uguale se nessun calo).
+    Per gli anni precedenti: pop_nuovo(t) = somma_d pop_d(t) * quota_d e pop_d(t) diminuisce di altrettanto.
+    I totali nazionali non cambiano."""
+    for c in sorted(vigenti):
+        presenti = [a for a in anni if a in serie[c]]
+        if not presenti or presenti[0] == anni[0]:
+            continue
+        Y = presenti[0]
+        buchi = [t for t in anni if t < Y and t not in serie[c]]
+        cedenti = {o for (yr, a, b, _) in eventi if Y - 2 <= yr <= Y and c in (a, b)
+                   for o in (a, b) if o != c and o in vigenti and (Y - 1) in serie[o] and Y in serie[o]}
+        if not cedenti:
+            log(f"  {c}: dati solo dal {Y}, nessun comune cedente trovato in SITUAS 129")
+            continue
+        cali = {d: max(0, serie[d][Y - 1] - serie[d][Y]) for d in cedenti}
+        tot_cali = sum(cali.values())
+        pesi = {d: (cali[d] / tot_cali if tot_cali else 1 / len(cedenti)) for d in cedenti}
+        quote = {}
+        for d in cedenti:
+            T = serie[c][Y] * pesi[d]
+            quote[d] = min(0.95, T / (serie[d][Y] + T)) if (serie[d][Y] + T) else 0
+        for t in buchi:
+            for d, q in quote.items():
+                if t not in serie[d]:
+                    continue
+                parte = int(round(serie[d][t] * q))
+                serie[c][t] = serie[c].get(t, 0) + parte
+                serie[d][t] -= parte
+                tipo[c][t] = tipo[d][t] = "P"
+        if buchi:
+            desc = ", ".join(f"{d} {q:.1%}" for d, q in sorted(quote.items()))
+            log(f"  {c}: anni {buchi[0]}-{buchi[-1]} stimati come quota dei comuni cedenti ({desc})")
+            extra_note[c].append(f"{buchi[0]}-{buchi[-1]}: stima, quota della popolazione dei comuni da cui è nato ({desc})")
+            for d, q in quote.items():
+                extra_note[d].append(f"{buchi[0]}-{buchi[-1]}: stima ai confini attuali, tolta la quota ceduta a {c} ({q:.1%})")
 
 
 # --------------------------------------------------------------------------
@@ -669,6 +715,12 @@ def ricostruisci():
             if a in serie[c]:
                 serie[c][a] = int(round(serie[c][a]))
 
+    # 3b. Comuni nati da parti di altri comuni
+    note, eventi = variazioni_note(vigenti)
+    extra_note: dict[str, list[str]] = defaultdict(list)
+    log("Comuni nuovi da scorporo:")
+    stima_comuni_nuovi(serie, tipo, anni, vigenti, eventi, extra_note)
+
     for a in anni:
         if non_raccordati[a]:
             persi = sum(dati[a][c] for c in non_raccordati[a])
@@ -684,9 +736,12 @@ def ricostruisci():
 
     roma = serie.get("058091", {})
     log(f"VERIFICA ROMA 058091: 2002={roma.get(2002)} 2019={roma.get(2019)} {ultimo}={roma.get(ultimo)}")
+    for cod in ("081021", "081025"):  # Trapani, Misiliscemi
+        log(f"VERIFICA {cod}: " + ", ".join(f"{a}={serie.get(cod, {}).get(a)}" for a in (2002, 2019, 2020, 2021, 2022, ultimo)))
 
     # 4. Note
-    note = variazioni_note(vigenti)
+    for c, righe in extra_note.items():
+        note[c].extend(righe)
     for c in vigenti:
         orig = sorted({o for a in anni for o in fonti[c].get(a, set())} - {c})
         if orig:
